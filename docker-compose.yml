@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: campus_agent
+      POSTGRES_USER: campus
+      POSTGRES_PASSWORD: campus
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U campus -d campus_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://campus:campus@postgres:5432/campus_agent
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      SCHEDULER_USER_ID: ${SCHEDULER_USER_ID:-local-user}
+      SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-Asia/Shanghai}
+      SCHEDULER_DAILY_HOUR: ${SCHEDULER_DAILY_HOUR:-9}
+      SCHEDULER_DAILY_MINUTE: ${SCHEDULER_DAILY_MINUTE:-0}
+      QQ_EMAIL_ADDRESS: ${QQ_EMAIL_ADDRESS:-}
+      QQ_EMAIL_AUTHORIZATION_CODE: ${QQ_EMAIL_AUTHORIZATION_CODE:-}
+      QQ_IMAP_HOST: ${QQ_IMAP_HOST:-imap.qq.com}
+      QQ_IMAP_PORT: ${QQ_IMAP_PORT:-993}
+      QQ_IMAP_MAILBOX: ${QQ_IMAP_MAILBOX:-INBOX}
+      QQ_IMAP_FETCH_LIMIT: ${QQ_IMAP_FETCH_LIMIT:-20}
+      QQ_EMAIL_SYNC_ENABLED: ${QQ_EMAIL_SYNC_ENABLED:-true}
+      QQ_EMAIL_SYNC_INTERVAL_HOURS: ${QQ_EMAIL_SYNC_INTERVAL_HOURS:-6}
+      MONITORING_PIPELINE_ENABLED: ${MONITORING_PIPELINE_ENABLED:-true}
+      MONITORING_PIPELINE_INTERVAL_HOURS: ${MONITORING_PIPELINE_INTERVAL_HOURS:-6}
+      WXPUBLIC_APP_ID: ${WXPUBLIC_APP_ID:-}
+      WXPUBLIC_SECURE_KEY: ${WXPUBLIC_SECURE_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

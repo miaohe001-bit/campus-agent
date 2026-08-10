@@ -1,0 +1,31 @@
+[project]
+name = "campus-agent-backend"
+version = "0.1.0"
+description = "Backend service for Campus Agent MVP"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "SQLAlchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "psycopg[binary]>=3.2.0",
+    "apscheduler>=3.10.0",
+    "openai>=1.40.0",
+]
+
+[project.scripts]
+smoke-api = "scripts.smoke_api:main"
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.27.0",
+    "pytest>=8.3.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["app*", "scripts*"]
