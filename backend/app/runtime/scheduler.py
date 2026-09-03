@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.runtime.loop import run_today_agent
 from app.services.email_imports import sync_qq_email
+from app.services.email_credentials import list_email_credential_user_ids
 from app.services.monitoring_pipeline import run_monitoring_pipeline
 from app.services.notifications import sync_user_reminders
 
@@ -167,13 +168,10 @@ def _run_scheduled_today_agent() -> None:
 def _run_scheduled_qq_email_sync() -> None:
     db = SessionLocal()
     try:
-        result = sync_qq_email(db, user_id=settings.scheduler_user_id)
-        if result.imported_count > 0:
-            run_today_agent(
-                db,
-                user_id=settings.scheduler_user_id,
-                plan_date=date.today(),
-            )
+        for user_id in list_email_credential_user_ids(db):
+            result = sync_qq_email(db, user_id=user_id)
+            if result.imported_count > 0:
+                run_today_agent(db, user_id=user_id, plan_date=date.today())
     finally:
         db.close()
 

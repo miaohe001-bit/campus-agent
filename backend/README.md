@@ -95,13 +95,12 @@ Supported MVP event detection is rule-based for now:
 
 ## QQ email sync
 
-QQ email sync uses IMAP over SSL.
+QQ email sync uses IMAP over SSL. Each user configures a separate mailbox in the web app, and credentials are encrypted before they are stored in the database.
 
-In the project root `.env`, configure:
+Configure one server-side encryption secret in the project root `.env`:
 
 ```env
-QQ_EMAIL_ADDRESS=your_qq_number@qq.com
-QQ_EMAIL_AUTHORIZATION_CODE=your_qq_mail_authorization_code
+APP_ENCRYPTION_KEY=replace-with-a-long-random-secret
 QQ_IMAP_HOST=imap.qq.com
 QQ_IMAP_PORT=993
 QQ_IMAP_MAILBOX=INBOX
@@ -114,7 +113,7 @@ Then restart backend:
 docker compose up -d backend
 ```
 
-Trigger sync:
+Users connect their QQ mailbox under `我的 -> 权限与隐私`. Trigger sync:
 
 ```bash
 curl -X POST "http://localhost:8000/email-imports/qq/sync?user_id=local-user"

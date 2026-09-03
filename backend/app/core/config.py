@@ -8,13 +8,12 @@ class Settings(BaseSettings):
     openai_base_url: str | None = None
     openai_model: str = "gpt-4o-mini"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    app_encryption_key: str | None = None
     scheduler_enabled: bool = True
     scheduler_user_id: str = "local-user"
     scheduler_timezone: str = "Asia/Shanghai"
     scheduler_daily_hour: int = 9
     scheduler_daily_minute: int = 0
-    qq_email_address: str | None = None
-    qq_email_authorization_code: str | None = None
     qq_imap_host: str = "imap.qq.com"
     qq_imap_port: int = 993
     qq_imap_mailbox: str = "INBOX"

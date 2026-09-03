@@ -7,6 +7,7 @@ from app.api.agent import router as agent_router
 from app.api.applications import router as applications_router
 from app.api.campaigns import router as campaigns_router
 from app.api.email_imports import router as email_imports_router
+from app.api.email_credentials import router as email_credentials_router
 from app.api.events import router as events_router
 from app.api.goals import router as goals_router
 from app.api.monitoring import router as monitoring_router
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(applications_router)
     app.include_router(campaigns_router)
     app.include_router(email_imports_router)
+    app.include_router(email_credentials_router)
     app.include_router(events_router)
     app.include_router(goals_router)
     app.include_router(monitoring_router)

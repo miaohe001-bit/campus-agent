@@ -3,7 +3,7 @@ import hashlib
 import imaplib
 import re
 from ftfy import fix_text
-from datetime import datetime
+from datetime import datetime, timezone
 from email.header import decode_header
 from email.message import Message
 from email.utils import parsedate_to_datetime
@@ -18,6 +18,11 @@ from app.schemas.email_imports import EmailImportCreate, EmailImportRead, QQEmai
 from app.schemas.events import RecruitmentEventCreate
 from app.services.events import create_event
 from app.services.email_classifier import classify_recruitment_emails
+from app.services.email_credentials import (
+    decrypt_email_credential,
+    get_email_credential,
+    mark_email_credential_synced,
+)
 
 
 RECRUITMENT_HINTS = (
@@ -294,19 +299,31 @@ def import_mock_email(
 
 
 def sync_qq_email(db: Session, *, user_id: str) -> QQEmailSyncRead:
-    if not settings.qq_email_address or not settings.qq_email_authorization_code:
+    credential = get_email_credential(db, user_id=user_id)
+    if credential is None:
         return QQEmailSyncRead(
             ok=False,
             scanned_count=0,
             imported_count=0,
             skipped_count=0,
-            reason="QQ email address or authorization code is not configured",
+            reason="QQ email is not configured for this user",
+        )
+
+    try:
+        email_address, authorization_code = decrypt_email_credential(credential)
+    except RuntimeError as error:
+        return QQEmailSyncRead(
+            ok=False,
+            scanned_count=0,
+            imported_count=0,
+            skipped_count=0,
+            reason=str(error),
         )
 
     imports: list[EmailImportRead] = []
     payloads: list[EmailImportCreate] = []
     with imaplib.IMAP4_SSL(settings.qq_imap_host, settings.qq_imap_port) as client:
-        client.login(settings.qq_email_address, settings.qq_email_authorization_code)
+        client.login(email_address, authorization_code)
         client.select(settings.qq_imap_mailbox, readonly=True)
         status, data = client.search(None, "ALL")
         if status != "OK" or not data or not data[0]:
@@ -342,7 +359,7 @@ def sync_qq_email(db: Session, *, user_id: str) -> QQEmailSyncRead:
         else:
             imports.append(import_mock_email(db, user_id=user_id, payload=payload))
 
-    return QQEmailSyncRead(
+    result = QQEmailSyncRead(
         ok=ai_error is None,
         scanned_count=len(imports),
         imported_count=sum(1 for item in imports if item.imported),
@@ -350,6 +367,8 @@ def sync_qq_email(db: Session, *, user_id: str) -> QQEmailSyncRead:
         reason=f"AI email parser unavailable: {ai_error}" if ai_error else None,
         imports=imports,
     )
+    mark_email_credential_synced(db, credential, datetime.now(timezone.utc))
+    return result
 
 
 def parse_recruitment_email(payload: EmailImportCreate) -> dict:

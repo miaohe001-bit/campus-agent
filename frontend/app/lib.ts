@@ -1,5 +1,14 @@
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-export const USER_ID = "local-user";
+const USER_ID_KEY = "campus-agent:user-id";
+
+export function userId(): string {
+  if (typeof window === "undefined") return "browser-user";
+  const existing = window.localStorage.getItem(USER_ID_KEY);
+  if (existing) return existing;
+  const created = window.crypto.randomUUID();
+  window.localStorage.setItem(USER_ID_KEY, created);
+  return created;
+}
 
 export type ApiResponse<T> = { code: number; message: string; data: T };
 export type Priority = "dream" | "target" | "safe";
@@ -11,6 +20,7 @@ export type Todo = { id: string; date: string; title: string; status: "pending" 
 export type Schedule = { id: string; application_id: string | null; campaign_id: string | null; title: string; schedule_type: string; status: string; starts_at: string | null; deadline_at: string | null; source: string; reminder_minutes: number[]; change_log: Array<{changed_at?:string;changes?:Record<string,unknown>}> };
 export type ReminderNotification = { id: string; schedule_id: string; title: string; schedule_type: string; event_at: string; remind_at: string; minutes_before: number; status: string };
 export type EmailSyncResult = { ok: boolean; scanned_count: number; imported_count: number; skipped_count: number; reason: string | null };
+export type EmailCredentialStatus = { configured: boolean; provider: "qq"; masked_email_address: string | null; enabled: boolean; last_synced_at: string | null };
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });

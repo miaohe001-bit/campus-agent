@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, Goal, Priority, USER_ID } from "../lib";
+import { api, Goal, Priority, userId } from "../lib";
 
 const options = { positions: ["产品经理","开发","算法","测试","数据分析","设计","运营","职能"], cities: ["北京","上海","深圳","杭州","成都","南京","武汉"], industries: ["互联网","AI","自动驾驶","游戏","金融","新能源"] };
 const companies = ["腾讯","阿里巴巴","字节跳动","美团","京东","百度","华为","小米","网易","快手","拼多多","哔哩哔哩","滴滴","携程","蚂蚁集团","DeepSeek","MiniMax","月之暗面","智谱 AI","商汤科技","小米汽车","理想汽车","蔚来","小鹏汽车","比亚迪"];
@@ -12,7 +12,7 @@ export default function Onboarding() {
  const toggle=(key:"target_positions"|"target_cities"|"target_industries", value:string)=>setGoal(g=>({...g,[key]:g[key].includes(value)?g[key].filter(x=>x!==value):[...g[key],value]}));
  const addCompany=(name:string)=>setGoal(g=>g.target_companies.some(c=>c.company_name===name)||g.target_companies.length>=10?g:{...g,target_companies:[...g.target_companies,{company_name:name,priority:"target"} ]});
  const setPriority=(name:string, priority:Priority)=>setGoal(g=>({...g,target_companies:g.target_companies.map(c=>c.company_name===name?{...c,priority}:c)}));
- async function save(){setSaving(true);try{await api(`/goals?user_id=${USER_ID}`,{method:"PATCH",body:JSON.stringify(goal)});router.push("/radar");}finally{setSaving(false)}}
+ async function save(){setSaving(true);try{await api(`/goals?user_id=${userId()}`,{method:"PATCH",body:JSON.stringify(goal)});router.push("/radar");}finally{setSaving(false)}}
  const canNext=step===1?goal.target_positions.length>0&&goal.target_cities.length>0&&goal.target_industries.length>0:goal.target_companies.length>0;
  return <div className="onboarding-page"><div className="onboarding-brand"><span className="brand-mark">CA</span> Campus Agent</div><div className="progress"><span style={{width:`${step*50}%`}}/></div><p className="step">第 {step} 步，共 2 步</p>
   {step===1?<section><p className="eyebrow">明确求职方向</p><h1>设置你的求职目标</h1><p className="lead">目标岗位、城市与行业将用于机会匹配和每日规划，之后可随时调整。</p>

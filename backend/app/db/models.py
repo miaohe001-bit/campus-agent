@@ -193,6 +193,18 @@ class AgentRun(Base, TimestampMixin):
     decision_trace: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class EmailCredential(Base, TimestampMixin):
+    __tablename__ = "email_credentials"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="qq")
+    encrypted_email_address: Mapped[str] = mapped_column(Text)
+    encrypted_authorization_code: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class MonitoringSource(Base, TimestampMixin):
     __tablename__ = "monitoring_sources"
     __table_args__ = (UniqueConstraint("user_id", "source_type", "value", name="uq_monitoring_source_value"),)

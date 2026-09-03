@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, dateText, Goal, localizeTodoText, ReminderNotification, Schedule, Todo, today, USER_ID } from "./lib";
+import { api, dateText, Goal, localizeTodoText, ReminderNotification, Schedule, Todo, today, userId } from "./lib";
 
 export default function Home() {
   const router = useRouter();
@@ -19,14 +19,14 @@ export default function Home() {
 
   async function load() {
     try {
-      await api<Goal>(`/goals?user_id=${USER_ID}`);
+      await api<Goal>(`/goals?user_id=${userId()}`);
     } catch (error) {
       if ((error as Error).message === "not-found") router.replace("/onboarding");
     }
     const [todoData, scheduleData, notificationData] = await Promise.all([
-      api<{ items: Todo[] }>(`/todos?user_id=${USER_ID}&date=${today()}`).catch(() => ({ items: [] })),
-      api<{ items: Schedule[] }>(`/schedules?user_id=${USER_ID}&status=pending`).catch(() => ({ items: [] })),
-      api<{ items: ReminderNotification[] }>(`/notifications?user_id=${USER_ID}`).catch(() => ({ items: [] })),
+      api<{ items: Todo[] }>(`/todos?user_id=${userId()}&date=${today()}`).catch(() => ({ items: [] })),
+      api<{ items: Schedule[] }>(`/schedules?user_id=${userId()}&status=pending`).catch(() => ({ items: [] })),
+      api<{ items: ReminderNotification[] }>(`/notifications?user_id=${userId()}`).catch(() => ({ items: [] })),
     ]);
     setTodos(todoData.items); setSchedules(scheduleData.items); setNotifications(notificationData.items);
   }
@@ -35,31 +35,31 @@ export default function Home() {
   async function plan() {
     setPlanning(true); setNotice("");
     try {
-      await api(`/agent/runs/today?user_id=${USER_ID}&date=${today()}&available_minutes=${minutes}`, { method: "POST" });
+      await api(`/agent/runs/today?user_id=${userId()}&date=${today()}&available_minutes=${minutes}`, { method: "POST" });
       await load(); setNotice("今天的计划已根据最新进展排好。");
     } catch { setNotice("生成失败，请确认服务已启动后重试。"); }
     setPlanning(false);
   }
   async function complete(todo: Todo) {
-    await api(`/todos/${todo.id}/completion?user_id=${USER_ID}`, { method: "PATCH", body: JSON.stringify({ completed: todo.status !== "completed", completion_source: "user" }) });
+    await api(`/todos/${todo.id}/completion?user_id=${userId()}`, { method: "PATCH", body: JSON.stringify({ completed: todo.status !== "completed", completion_source: "user" }) });
     await load();
   }
   async function postpone(todo: Todo) {
     const next = new Date(); next.setDate(next.getDate() + 1);
-    await api(`/todos/${todo.id}?user_id=${USER_ID}`, { method: "PATCH", body: JSON.stringify({ date: next.toISOString().slice(0, 10) }) });
+    await api(`/todos/${todo.id}?user_id=${userId()}`, { method: "PATCH", body: JSON.stringify({ date: next.toISOString().slice(0, 10) }) });
     await load(); setNotice("已延期到明天。");
   }
   async function ignore(todo: Todo) {
-    await api(`/todos/${todo.id}?user_id=${USER_ID}`, { method: "PATCH", body: JSON.stringify({ status: "expired" }) });
+    await api(`/todos/${todo.id}?user_id=${userId()}`, { method: "PATCH", body: JSON.stringify({ status: "expired" }) });
     await load(); setNotice("已从今天忽略，可在历史记录中查看。");
   }
   async function addTodo(e: React.FormEvent) {
     e.preventDefault(); if (!title.trim()) return;
-    await api(`/todos?user_id=${USER_ID}`, { method: "POST", body: JSON.stringify({ date: today(), title: title.trim(), source: "user", estimated_minutes: 20 }) });
+    await api(`/todos?user_id=${userId()}`, { method: "POST", body: JSON.stringify({ date: today(), title: title.trim(), source: "user", estimated_minutes: 20 }) });
     setTitle(""); setAdding(false); await load();
   }
   async function readNotification(id: string) {
-    await api(`/notifications/${id}/read?user_id=${USER_ID}`, { method: "PATCH" });
+    await api(`/notifications/${id}/read?user_id=${userId()}`, { method: "PATCH" });
     setNotifications(current => current.filter(item => item.id !== id));
   }
   const pending = todos.filter(t => t.status === "pending");
