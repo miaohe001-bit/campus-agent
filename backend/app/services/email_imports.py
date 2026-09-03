@@ -2,6 +2,7 @@ import email
 import hashlib
 import imaplib
 import re
+from ftfy import fix_text
 from datetime import datetime
 from email.header import decode_header
 from email.message import Message
@@ -11,11 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.enums import RecruitmentEventType
+from app.db.enums import ApplicationStage, RecruitmentEventType
 from app.db.models import Application, Campaign, RecruitmentEvent
 from app.schemas.email_imports import EmailImportCreate, EmailImportRead, QQEmailSyncRead
 from app.schemas.events import RecruitmentEventCreate
 from app.services.events import create_event
+from app.services.email_classifier import classify_recruitment_emails
 
 
 RECRUITMENT_HINTS = (
@@ -144,6 +146,8 @@ EVENT_KEYWORDS: list[tuple[RecruitmentEventType, tuple[str, ...]]] = [
             "\u9762\u8bd5\u9080\u8bf7",
             "\u9762\u8bd5\u901a\u77e5",
             "\u9762\u8bd5\u5b89\u6392",
+            "\u8fdb\u5165\u9762\u8bd5",
+            "\u53c2\u52a0\u9762\u8bd5",
             "\u4e00\u9762",
             "\u4e8c\u9762",
             "\u4e09\u9762",
@@ -152,24 +156,30 @@ EVENT_KEYWORDS: list[tuple[RecruitmentEventType, tuple[str, ...]]] = [
         ),
     ),
     (
-        RecruitmentEventType.written_test_scheduled,
-        (
-            "\u7b14\u8bd5\u901a\u77e5",
-            "\u7b14\u8bd5\u5b89\u6392",
-            "\u5728\u7ebf\u6d4b\u8bc4",
-            "\u5728\u7ebf\u7b14\u8bd5",
-            "written test",
-            "online test",
-            "coding test",
-        ),
-    ),
-    (
         RecruitmentEventType.assessment_completed,
         ("\u6d4b\u8bc4\u5b8c\u6210", "assessment completed"),
     ),
     (
         RecruitmentEventType.assessment_received,
-        ("\u6d4b\u8bc4\u901a\u77e5", "\u6d4b\u9a8c\u901a\u77e5", "assessment invitation"),
+        (
+            "\u6d4b\u8bc4\u901a\u77e5",
+            "\u6d4b\u9a8c\u901a\u77e5",
+            "\u6d4b\u8bc4\u9080\u8bf7",
+            "\u5728\u7ebf\u6d4b\u8bc4\u9080\u8bf7",
+            "\u53c2\u4e0e\u6821\u56ed\u62db\u8058\u5728\u7ebf\u6d4b\u8bc4",
+            "assessment invitation",
+        ),
+    ),
+    (
+        RecruitmentEventType.written_test_scheduled,
+        (
+            "\u7b14\u8bd5\u901a\u77e5",
+            "\u7b14\u8bd5\u5b89\u6392",
+            "\u5728\u7ebf\u7b14\u8bd5",
+            "written test",
+            "online test",
+            "coding test",
+        ),
     ),
     (
         RecruitmentEventType.deadline_updated,
@@ -179,6 +189,8 @@ EVENT_KEYWORDS: list[tuple[RecruitmentEventType, tuple[str, ...]]] = [
         RecruitmentEventType.application_submitted,
         (
             "\u6295\u9012\u6210\u529f",
+            "\u7533\u8bf7\u6210\u529f",
+            "\u7b80\u5386\u5df2\u6536\u5230",
             "\u5df2\u6536\u5230\u4f60\u7684\u7533\u8bf7",
             "\u7b80\u5386\u6295\u9012",
             "application received",
@@ -200,8 +212,9 @@ def import_mock_email(
     *,
     user_id: str,
     payload: EmailImportCreate,
+    parsed_override: dict | None = None,
 ) -> EmailImportRead:
-    parsed = parse_recruitment_email(payload)
+    parsed = parsed_override or parse_recruitment_email(payload)
     event_type = parsed.get("event_type")
     if event_type is None:
         return EmailImportRead(
@@ -212,14 +225,36 @@ def import_mock_email(
 
     idempotency_key = _idempotency_key(user_id, payload)
     existing = db.scalar(select(RecruitmentEvent).where(RecruitmentEvent.idempotency_key == idempotency_key))
-    if existing is not None:
-        return EmailImportRead(
-            imported=False,
-            reason="email already imported",
-            event=None,
-            parsed=parsed,
-        )
     application_id, campaign_id = _resolve_related_records(db, user_id=user_id, payload=payload)
+    application_id = _ensure_email_application(
+        db,
+        user_id=user_id,
+        application_id=application_id,
+        campaign_id=campaign_id,
+        event_type=event_type,
+        company_name=parsed.get("company_name"),
+        position_name=parsed.get("position_name"),
+    )
+    if existing is not None:
+        needs_correction = existing.event_type != event_type
+        needs_link_replay = existing.application_id is None and application_id is not None
+        needs_position_relink = False
+        parsed_position = parsed.get("position_name")
+        if existing.application_id and parsed_position:
+            linked_application = db.get(Application, existing.application_id)
+            needs_position_relink = bool(linked_application and linked_application.position_name != parsed_position.strip())
+        if not needs_correction and not needs_link_replay and not needs_position_relink:
+            return EmailImportRead(
+                imported=False,
+                reason="email already imported",
+                event=None,
+                parsed=parsed,
+            )
+        correction_kind = "correction" if needs_correction else "position" if needs_position_relink else "linked"
+        idempotency_key = f"{idempotency_key}:{correction_kind}:{event_type.value}"
+        corrected = db.scalar(select(RecruitmentEvent).where(RecruitmentEvent.idempotency_key == idempotency_key))
+        if corrected is not None:
+            return EmailImportRead(imported=False, reason="email correction already applied", parsed=parsed)
 
     event_payload = {
         "title": _event_title(payload, event_type),
@@ -269,6 +304,7 @@ def sync_qq_email(db: Session, *, user_id: str) -> QQEmailSyncRead:
         )
 
     imports: list[EmailImportRead] = []
+    payloads: list[EmailImportCreate] = []
     with imaplib.IMAP4_SSL(settings.qq_imap_host, settings.qq_imap_port) as client:
         client.login(settings.qq_email_address, settings.qq_email_authorization_code)
         client.select(settings.qq_imap_mailbox, readonly=True)
@@ -284,14 +320,34 @@ def sync_qq_email(db: Session, *, user_id: str) -> QQEmailSyncRead:
             raw_message = _first_raw_message(fetched)
             if raw_message is None:
                 continue
-            payload = _email_payload_from_raw(raw_message)
+            payloads.append(_email_payload_from_raw(raw_message))
+
+    ai_decisions, ai_error = classify_recruitment_emails(payloads)
+    for index, payload in enumerate(payloads):
+        decision = ai_decisions.get(index)
+        if decision and decision.get("confidence") == "high" and decision.get("is_recruitment") and decision.get("event_type"):
+            parsed = {
+                "event_type": RecruitmentEventType(decision["event_type"]),
+                "confidence": "ai_high",
+                "company_name": decision.get("company_name"),
+                "position_name": decision.get("position_name"),
+                "scheduled_at": decision.get("scheduled_at"),
+                "deadline_at": decision.get("deadline_at"),
+                "evidence": decision.get("evidence"),
+                "normalized_subject": _repair_mojibake(payload.subject),
+            }
+            imports.append(import_mock_email(db, user_id=user_id, payload=payload, parsed_override=parsed))
+        elif decision and decision.get("confidence") in {"low", "medium"} and decision.get("is_recruitment"):
+            imports.append(EmailImportRead(imported=False, reason="recruitment email needs confirmation", parsed=decision))
+        else:
             imports.append(import_mock_email(db, user_id=user_id, payload=payload))
 
     return QQEmailSyncRead(
-        ok=True,
+        ok=ai_error is None,
         scanned_count=len(imports),
         imported_count=sum(1 for item in imports if item.imported),
         skipped_count=sum(1 for item in imports if not item.imported),
+        reason=f"AI email parser unavailable: {ai_error}" if ai_error else None,
         imports=imports,
     )
 
@@ -303,7 +359,8 @@ def parse_recruitment_email(payload: EmailImportCreate) -> dict:
     text = f"{subject}\n{body}\n{from_address}".lower()
     has_negative_hint = _has_negative_hint(text)
     has_hint = _has_recruitment_hint(text)
-    event_type = _detect_event_type(text) if has_hint and not has_negative_hint else None
+    subject_event_type = _detect_event_type(subject.lower())
+    event_type = subject_event_type or (_detect_event_type(text) if has_hint and not has_negative_hint else None)
     parsed: dict = {
         "event_type": event_type,
         "confidence": "rule_based" if event_type else "none",
@@ -413,30 +470,95 @@ def _resolve_related_records(
     exact_matches = [
         item
         for item in applications
-        if item.company_name.lower() in text and item.position_name.lower() in text
+        if _repair_mojibake(item.company_name).lower() in text and _repair_mojibake(item.position_name).lower() in text
     ]
     if len(exact_matches) == 1:
         item = exact_matches[0]
         return item.id, item.campaign_id
 
-    company_matches = [item for item in applications if item.company_name.lower() in text]
+    company_matches = [item for item in applications if _repair_mojibake(item.company_name).lower() in text]
     if len(company_matches) == 1:
         item = company_matches[0]
         return item.id, item.campaign_id
 
-    position_matches = [item for item in applications if item.position_name.lower() in text]
+    position_matches = [item for item in applications if _repair_mojibake(item.position_name).lower() in text]
     if len(position_matches) == 1:
         item = position_matches[0]
         return item.id, item.campaign_id
 
     campaigns = db.scalars(select(Campaign).order_by(Campaign.created_at.desc()).limit(50)).all()
     for item in campaigns:
-        if item.company_name.lower() in text or item.name.lower() in text:
+        if _repair_mojibake(item.company_name).lower() in text or _repair_mojibake(item.name).lower() in text:
             return None, item.id
 
     if len(applications) == 1:
         return applications[0].id, applications[0].campaign_id
     return None, None
+
+
+def _ensure_email_application(
+    db: Session,
+    *,
+    user_id: str,
+    application_id: str | None,
+    campaign_id: str | None,
+    event_type: RecruitmentEventType,
+    company_name: str | None = None,
+    position_name: str | None = None,
+) -> str | None:
+    if application_id is not None:
+        return application_id
+    if event_type not in {
+        RecruitmentEventType.application_submitted,
+        RecruitmentEventType.assessment_received,
+        RecruitmentEventType.assessment_completed,
+        RecruitmentEventType.written_test_scheduled,
+        RecruitmentEventType.interview_scheduled,
+        RecruitmentEventType.offer_received,
+        RecruitmentEventType.rejected,
+        RecruitmentEventType.interview_rescheduled,
+        RecruitmentEventType.interview_canceled,
+    }:
+        return None
+    if company_name:
+        company_applications = db.scalars(
+            select(Application)
+            .where(Application.user_id == user_id)
+            .where(Application.company_name == company_name.strip())
+            .where(Application.deleted_at.is_(None))
+            .order_by(Application.last_changed_at.desc())
+        ).all()
+        if position_name:
+            exact = next((item for item in company_applications if item.position_name == position_name.strip()), None)
+            if exact is not None:
+                return exact.id
+        elif len(company_applications) == 1:
+            return company_applications[0].id
+    if campaign_id is not None:
+        existing = db.scalar(
+            select(Application)
+            .where(Application.user_id == user_id)
+            .where(Application.campaign_id == campaign_id)
+            .where(Application.deleted_at.is_(None))
+            .order_by(Application.last_changed_at.desc())
+        )
+        if existing is not None:
+            return existing.id
+    campaign = db.get(Campaign, campaign_id) if campaign_id else None
+    resolved_company = company_name.strip() if company_name else (_repair_mojibake(campaign.company_name) if campaign else None)
+    if not resolved_company:
+        return None
+    application = Application(
+        user_id=user_id,
+        campaign_id=campaign_id,
+        company_name=resolved_company,
+        position_name=position_name.strip() if position_name else "岗位待确认",
+        stage=ApplicationStage.submitted,
+        source="email",
+    )
+    db.add(application)
+    db.flush()
+    return application.id
 
 
 def _idempotency_key(user_id: str, payload: EmailImportCreate) -> str:
@@ -521,13 +643,18 @@ def _decode_message_part(part: Message) -> str:
 def _repair_mojibake(value: str) -> str:
     if not value:
         return value
-    if not any(marker in value for marker in ("Ã", "Â", "å", "æ", "ç", "è", "é", "ð")):
-        return value
-    try:
-        repaired = value.encode("latin1").decode("utf-8")
-    except UnicodeError:
-        return value
-    return repaired if _looks_more_readable(repaired, value) else value
+    current = fix_text(value)
+    for _ in range(3):
+        if not any(marker in current for marker in ("Ã", "Â", "å", "æ", "ç", "è", "é", "ð")):
+            break
+        try:
+            repaired = current.encode("latin1").decode("utf-8")
+        except UnicodeError:
+            break
+        if not _looks_more_readable(repaired, current):
+            break
+        current = repaired
+    return current
 
 
 def _looks_more_readable(candidate: str, original: str) -> bool:

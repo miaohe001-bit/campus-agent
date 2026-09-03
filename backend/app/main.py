@@ -14,6 +14,7 @@ from app.api.notifications import router as notifications_router
 from app.api.routes import router
 from app.api.schedules import router as schedules_router
 from app.api.todos import router as todos_router
+from app.core.config import settings
 from app.runtime.scheduler import shutdown_scheduler, start_scheduler
 
 
@@ -28,12 +29,10 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Campus Agent API", lifespan=lifespan)
+    allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

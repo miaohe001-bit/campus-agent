@@ -180,11 +180,14 @@ def _find_related_pending_schedule(
     event: RecruitmentEvent,
     schedule_type: ScheduleType,
 ) -> Schedule | None:
+    eligible_statuses = [ScheduleStatus.pending]
+    if event.event_type == RecruitmentEventType.interview_rescheduled:
+        eligible_statuses.append(ScheduleStatus.missed)
     statement = (
         select(Schedule)
         .where(Schedule.user_id == event.user_id)
         .where(Schedule.schedule_type == schedule_type)
-        .where(Schedule.status == ScheduleStatus.pending)
+        .where(Schedule.status.in_(eligible_statuses))
     )
     if event.application_id is not None:
         statement = statement.where(Schedule.application_id == event.application_id)

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     openai_model: str = "gpt-4o-mini"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     scheduler_enabled: bool = True
     scheduler_user_id: str = "local-user"
     scheduler_timezone: str = "Asia/Shanghai"

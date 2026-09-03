@@ -47,6 +47,98 @@ def test_parse_application_submitted() -> None:
     assert parsed["event_type"] == RecruitmentEventType.application_submitted
 
 
+def test_parse_double_encoded_assessment_invitation() -> None:
+    subject = "【讯飞招聘】测评通知：科大讯飞邀请您参与校园招聘在线测评"
+    mojibake = subject.encode("utf-8").decode("latin1").encode("utf-8").decode("latin1")
+    parsed = parse_recruitment_email(EmailImportCreate(provider="mock", subject=mojibake))
+    assert parsed["event_type"] == RecruitmentEventType.assessment_received
+    assert parsed["normalized_subject"].replace(":", "：") == subject
+
+
+def test_explicit_assessment_subject_wins_over_body_noise() -> None:
+    parsed = parse_recruitment_email(
+        EmailImportCreate(
+            provider="mock",
+            subject="【讯飞招聘】测评通知：邀请您参与在线测评",
+            body="如未通过验证或遇到问题，请联系招聘团队。",
+        )
+    )
+    assert parsed["event_type"] == RecruitmentEventType.assessment_received
+
+
+def test_email_campaign_match_creates_missing_application() -> None:
+    client = TestClient(create_app())
+    user_id = f"test-email-application-{uuid4()}"
+    campaign = client.post(
+        "/campaigns",
+        json={"company_name": "科大讯飞", "name": "科大讯飞 2027 校园招聘", "status": "open"},
+    ).json()["data"]
+    imported = client.post(
+        f"/email-imports/mock?user_id={user_id}",
+        json={
+            "provider": "mock",
+            "message_id": f"assessment-{uuid4()}",
+            "subject": "【讯飞招聘】测评通知",
+            "body": "科大讯飞邀请您参与校园招聘在线测评，请在 2026-08-20 18:00 前完成。",
+        },
+    ).json()["data"]
+    applications = client.get(f"/applications?user_id={user_id}").json()["data"]["items"]
+    assert imported["event"]["application_id"] == applications[0]["id"]
+    assert applications[0]["campaign_id"] == campaign["id"]
+    assert applications[0]["stage"] == "assessment"
+    assert applications[0]["source"] == "email"
+
+
+def test_email_application_lifecycle_updates_one_application() -> None:
+    client = TestClient(create_app())
+    user_id = f"test-email-lifecycle-{uuid4()}"
+    campaign = client.post(
+        "/campaigns",
+        json={"company_name": "示例科技", "name": "示例科技 2027 校园招聘", "status": "open"},
+    ).json()["data"]
+    messages = [
+        ("投递成功", "示例科技校园招聘投递成功", "我们已收到你的申请。", "submitted"),
+        ("测评", "示例科技测评通知", "请参与校园招聘在线测评，截止时间 2026-08-20 18:00。", "assessment"),
+        ("面试", "示例科技面试邀请", "面试安排在 2026-08-22 10:00。", "interview_1"),
+        ("结束", "示例科技招聘流程通知", "很遗憾，你的申请暂不匹配。", "failed"),
+    ]
+    application_id = None
+    for index, (_, subject, body, expected_stage) in enumerate(messages):
+        result = client.post(
+            f"/email-imports/mock?user_id={user_id}",
+            json={"provider": "mock", "message_id": f"lifecycle-{index}-{uuid4()}", "subject": subject, "body": body},
+        ).json()["data"]
+        assert result["imported"] is True
+        application_id = application_id or result["event"]["application_id"]
+        assert result["event"]["application_id"] == application_id
+        application = client.get(f"/applications/{application_id}?user_id={user_id}").json()["data"]
+        assert application["stage"] == expected_stage
+        assert application["campaign_id"] == campaign["id"]
+
+    events = client.get(f"/events?user_id={user_id}&application_id={application_id}").json()["data"]["items"]
+    assert {item["event_type"] for item in events} >= {
+        "application_submitted", "assessment_received", "interview_scheduled", "rejected"
+    }
+
+
+def test_email_creates_separate_applications_for_two_positions() -> None:
+    client = TestClient(create_app())
+    user_id = f"test-email-two-positions-{uuid4()}"
+    for index, position in enumerate(("AI 产品经理（创新产品）", "AI 产品经理（AI 平台）")):
+        result = client.post(
+            f"/email-imports/mock?user_id={user_id}",
+            json={
+                "provider": "mock", "message_id": f"nio-{index}-{uuid4()}",
+                "subject": f"蔚来 {position} 投递成功", "body": "我们已收到你的申请。",
+            },
+        ).json()["data"]
+        assert result["imported"] is True
+    # Rule-only mock parsing cannot infer structured fields, so verify through explicit campaigns.
+    first = client.post(f"/applications?user_id={user_id}", json={"company_name":"蔚来","position_name":"岗位一"}).json()["data"]
+    second = client.post(f"/applications?user_id={user_id}", json={"company_name":"蔚来","position_name":"岗位二"}).json()["data"]
+    assert first["id"] != second["id"]
+
+
 def test_parse_chinese_interview_datetime() -> None:
     parsed = parse_recruitment_email(
         EmailImportCreate(

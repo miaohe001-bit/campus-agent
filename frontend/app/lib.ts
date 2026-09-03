@@ -10,6 +10,7 @@ export type RecruitmentEvent = { id: string; application_id: string | null; camp
 export type Todo = { id: string; date: string; title: string; status: "pending" | "completed" | "expired"; source: "planner" | "user"; completion_source: string | null; estimated_minutes: number | null; business_reason: string | null };
 export type Schedule = { id: string; application_id: string | null; campaign_id: string | null; title: string; schedule_type: string; status: string; starts_at: string | null; deadline_at: string | null; source: string; reminder_minutes: number[]; change_log: Array<{changed_at?:string;changes?:Record<string,unknown>}> };
 export type ReminderNotification = { id: string; schedule_id: string; title: string; schedule_type: string; event_at: string; remind_at: string; minutes_before: number; status: string };
+export type EmailSyncResult = { ok: boolean; scanned_count: number; imported_count: number; skipped_count: number; reason: string | null };
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
